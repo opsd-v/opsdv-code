@@ -8,8 +8,8 @@ This review copy removes identifying documentation links and promotional assets;
 the implementation and configurations are unchanged.
 
 [Project page](https://anonymous.4open.science/w/OPSD-V-2027/) ·
-[Installation](#installation) · [Checkpoints](#checkpoints) ·
-[Training](#training) · [Inference](#inference)
+[Installation](https://anonymous.4open.science/r/OPSD-V-Code-2027/README.md#installation) · [Checkpoints](https://anonymous.4open.science/r/OPSD-V-Code-2027/README.md#checkpoints) ·
+[Training](https://anonymous.4open.science/r/OPSD-V-Code-2027/README.md#training) · [Inference](https://anonymous.4open.science/r/OPSD-V-Code-2027/README.md#inference)
 
 This repository contains training, inference, configuration, and data-preparation
 code. Model weights and training data are not included. The project page provides
