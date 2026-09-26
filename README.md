@@ -45,7 +45,7 @@ OPSD-V training.
 - **On-policy student rollout.** The student writes its own generated chunks into the KV cache and keeps rolling out from the resulting temporal states.
 - **Cleaner teacher context.** The teacher is evaluated on the same student-visited noisy latents and timesteps, but uses real-video history for older cache context.
 - **Few-step path preserved.** OPSD-V does not change the original 4-step autoregressive sampler used at inference.
-- **Memory-conscious training.** Chunk-wise backward, detached denoising transitions, FSDP, gradient checkpointing, and LoRA/EMA support keep long rollouts feasible.
+- **Memory-conscious training.** Per-denoising-step backward, detached denoising transitions, FSDP, gradient checkpointing, and LoRA/EMA support keep long rollouts feasible.
 - **Deterministic prompt seeding.** `--per_prompt_seed` avoids noise drift when resuming a partially generated evaluation folder.
 
 ## Method
@@ -152,22 +152,44 @@ or through an environment variable:
 export WAN_MODEL_ROOT=/path/to/Wan2.1-T2V-1.3B
 ```
 
-This anonymous supplement does not distribute model weights. Obtain the base
-checkpoints from the official [Self-Forcing](https://github.com/guandeh17/Self-Forcing)
-and [LongLive](https://github.com/NVlabs/LongLive) releases and prepare them at the
-paths below. Running the OPSD-V inference configurations additionally requires
-an OPSD-V LoRA checkpoint, produced by training with this code or supplied
-separately. Those trained adapters are not included in this repository.
+The model-specific checkpoints are available in our
+[anonymous Hugging Face repository](https://huggingface.co/anonymousopsd-v/OPSD-V).
+From the code repository root, download all five files to the paths expected by
+the configurations:
 
-The provided configurations expect:
+```bash
+hf download anonymousopsd-v/OPSD-V --include 'checkpoints/*' --local-dir .
+```
 
-| File | Used by | Meaning |
+| Model | Base generator | LoRA adapter |
 | --- | --- | --- |
-| `checkpoints/longlive_base.pt` | LongLive training/inference | Base few-step AR generator |
-| `checkpoints/longlive_lora.pt` | LongLive training | Initial LongLive LoRA, if continuing from a released adapter |
-| `checkpoints/self_forcing_dmd_ema_as_generator.pt` | Self-Forcing training/inference | Self-Forcing DMD/EMA generator |
-| `checkpoints/opsdv_longlive_lora.pt` | LongLive inference | Trained OPSD-V LoRA checkpoint (not bundled) |
-| `checkpoints/opsdv_self_forcing_lora.pt` | Self-Forcing inference | Trained OPSD-V LoRA checkpoint (not bundled) |
+| Self-Forcing | `checkpoints/self_forcing_dmd_ema_as_generator.pt` | None |
+| Self-Forcing + OPSD-V | `checkpoints/self_forcing_dmd_ema_as_generator.pt` | `checkpoints/opsdv_self_forcing_lora.pt` |
+| LongLive | `checkpoints/longlive_base.pt` | `checkpoints/longlive_lora.pt` |
+| LongLive + OPSD-V | `checkpoints/longlive_base.pt` | `checkpoints/opsdv_longlive_lora.pt` |
+
+The four models share two base generators. For LongLive + OPSD-V, load the
+OPSD-V adapter directly on the base generator; do not stack it with the original
+LongLive adapter. The LongLive training configuration initializes from the
+original `longlive_lora.pt` adapter. Shared Wan components, including the VAE
+and text encoder, still require the separate download above.
+
+| Model | Inference configuration |
+| --- | --- |
+| Self-Forcing | `configs/inference_self_forcing_original.yaml` |
+| Self-Forcing + OPSD-V | `configs/inference_self_forcing.yaml` |
+| LongLive | `configs/inference_longlive_original.yaml` |
+| LongLive + OPSD-V | `configs/inference_longlive.yaml` |
+
+Use the default checkpoint selection in these configurations. The supplied
+Self-Forcing checkpoint already stores its EMA-derived weights under
+`generator`, so its filename does not require `--use_ema`. The OPSD-V
+configurations load the online LoRA weights by default.
+
+The base generators and original LongLive adapter come from the official
+[Self-Forcing](https://github.com/guandeh17/Self-Forcing) and
+[LongLive](https://github.com/NVlabs/LongLive) releases. Please follow their
+licenses and usage terms.
 
 Base generator checkpoints may store weights under `generator`, `generator_ema`, or `model`. OPSD-V LoRA checkpoints store `generator_lora`, optional `generator_ema`, optimizer state, and `step`.
 
@@ -251,8 +273,14 @@ Training resumes automatically from the latest `checkpoint_model_*/model.pt` in 
 | `opsd_loss_type` | `flow` | Match velocity/flow predictions rather than reconstructed `x0`. |
 | `opsd_loss_step_mode` | `all` | Supervise all denoising steps in the fixed few-step trajectory. |
 | `opsd_loss_start_frame` | `21` | Skip the first seven 3-frame chunks before applying loss. |
-| `opsd_backward_per_chunk` | `true` | Backpropagate chunk by chunk to reduce activation memory. |
+| `opsd_backward_per_chunk` | `true` | Backpropagate after each supervised denoising step to reduce activation memory. |
 | `opsd_use_relative_sink` | `true` | Match the relative-sink cache policy used at inference. |
+
+Despite its historical name, `opsd_backward_per_chunk` enables backward after
+each supervised denoising step. Detached buffers accumulate the gradients
+throughout the rollout while the student and teacher parameters remain fixed.
+After the rollout, the trainer restores and clips the accumulated gradients,
+takes one student optimizer step, and updates the EMA teacher.
 
 ## Inference
 
